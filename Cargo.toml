@@ -1,0 +1,14 @@
+[package]
+name = "KeyFlux"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "macOS Shift and Caps Lock menu bar utility"
+license = "MIT"
+
+[dependencies]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSObject", "NSString", "NSNotification", "NSGeometry", "NSURL"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "objc2-core-foundation", "NSApplication", "NSResponder", "NSRunningApplication", "NSWindow", "NSView", "NSControl", "NSButton", "NSFont", "NSMenu", "NSMenuItem", "NSGraphics", "NSAlert", "NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSWorkspace"] }
