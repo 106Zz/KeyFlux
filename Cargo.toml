@@ -10,5 +10,5 @@ license = "MIT"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSObject", "NSString", "NSNotification", "NSGeometry", "NSURL"] }
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "objc2-core-foundation", "NSApplication", "NSResponder", "NSRunningApplication", "NSWindow", "NSView", "NSControl", "NSButton", "NSFont", "NSMenu", "NSMenuItem", "NSGraphics", "NSAlert", "NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSWorkspace"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSObject", "NSString", "NSNotification", "NSGeometry", "NSURL", "NSAttributedString", "NSDictionary", "NSValue"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "objc2-core-foundation", "NSApplication", "NSResponder", "NSRunningApplication", "NSWindow", "NSView", "NSControl", "NSButton", "NSCell", "NSAttributedString", "NSColor", "NSFont", "NSMenu", "NSMenuItem", "NSGraphics", "NSStatusBar", "NSStatusItem", "NSStatusBarButton", "NSWorkspace"] }

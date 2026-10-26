@@ -399,7 +399,7 @@ impl KeyboardProcessor {
         }
         // 不能在底层 Caps 仍打开时切入拼音，也不能提前补发暂存字母。
         if self.caps_sync.delay(Instant::now()).is_some() {
-            if let Some(wakeup) = &self.wakeup { wakeup.arm(CONFIRM_INTERVAL); }
+            // Caps 成功确认会主动唤醒来源流程；等待期间不再每 20ms 查询 TIS。
             return;
         }
         match self.switching.advance(Instant::now(), &current) {

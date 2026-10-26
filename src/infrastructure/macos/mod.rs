@@ -12,5 +12,7 @@ pub(crate) mod permissions;
 pub(crate) mod run_loop;
 pub(crate) mod timer;
 pub(crate) mod launch;
+#[cfg(target_os = "macos")]
+pub(crate) mod login_item;
 pub(crate) mod control_window;
 pub(crate) mod diagnostics;

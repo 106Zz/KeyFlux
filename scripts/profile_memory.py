@@ -7,7 +7,6 @@ from datetime import datetime
 import hashlib
 import json
 import math
-import re
 from pathlib import Path
 import subprocess
 import sys
@@ -28,24 +27,19 @@ STAGES = [
 
 
 def check_listener(pid, label):
-    source = monitor.ROOT / "target/keyflux-runtime.log"
-    state = None
-    if source.exists():
-        with source.open("rb") as output:
-            output.seek(max(0, source.stat().st_size - 262144))
-            lines = output.read().decode("utf-8", errors="replace").splitlines()
-        for line in lines:
-            match = re.match(r"\[[\d.]+ pid=" + str(pid) + r"\] (.*)", line)
-            if match:
-                if "Shift 切换与中/英键短按大写已接入" in match[1]:
-                    state = True
-                elif "监听已停止" in match[1]:
-                    state = False
-    if state is None:
+    status = monitor.runtime_status(pid)
+    if status.state == "unknown":
         raise RuntimeError("无法从 target/keyflux-runtime.log 确认本进程的监听状态。请按 README 重定向启动日志后重测，未确认的阶段不采集。")
     expected = label not in ("01_gui_idle", "05_monitor_stopped")
-    if state != expected:
-        raise RuntimeError(f"{label} 的监听状态不符合预期（实际：{'监听中' if state else '已停止'}）。本次测试中止，请查看运行日志中的错误，不要继续下一批。")
+    if status.state == "recovering" or (status.state == "listening") != expected:
+        raise RuntimeError(f"{label} 的监听状态不符合预期（实际：{status.state}）。本次测试中止，请查看运行日志中的错误，不要继续下一批。")
+    return status.snapshot()
+
+
+def check_faults(before, after):
+    keys = ("monitor_failures", "recovery_attempts", "recovery_failures", "recovery_successes")
+    if any(after[key] != before[key] for key in keys):
+        raise RuntimeError("本阶段发生监听故障 / 自动重建，或日志窗口变化。即使已经自动恢复，也不能记为无异常压力测试；本次诊断中止，保留运行日志后排查。")
 
 
 def save_json(path, value):
@@ -166,17 +160,20 @@ def main():
         print("不会自动按键、点击 GUI、停止或重启 KeyFlux。保持同一个进程；请先关闭详细诊断。", flush=True)
         with (folder / "notes.jsonl").open("x", buffering=1) as notes:
             for label, instruction, baseline in STAGES:
+                before_runtime = monitor.runtime_status(pid).snapshot()
                 print(f"\n{label}：{instruction}", flush=True)
                 note = input("完成后回到此终端，输入操作次数/应用/异常等备注（可留空），按回车继续：")
                 notes.write(json.dumps({"timestamp": monitor.stamp(), "stage": label, "note": note}, ensure_ascii=False) + "\n")
                 delay = args.baseline_wait if baseline else args.settle
-                check_listener(pid, label)
+                check_faults(before_runtime, check_listener(pid, label))
                 print(f"静置 {delay:g} 秒；快照完成前请暂停输入操作。", flush=True)
                 time.sleep(delay)
-                check_listener(pid, label)
+                check_faults(before_runtime, check_listener(pid, label))
                 value = capture(native, pid, initial.start, executable, folder, label,
                                 check_leaks=args.leaks and label == STAGES[-1][0])
-                check_listener(pid, label)
+                after_runtime = check_listener(pid, label)
+                check_faults(before_runtime, after_runtime)
+                value["runtime_counter_delta"] = {key: after_runtime[key] - before_runtime[key] for key in monitor.RUNTIME_COUNTERS}
                 stages.append(value)
                 before = value["before_tools"]
                 print(f"已保存：RSS={before['rss_mb']:.3f} MB，Footprint={before['footprint_mb']:.3f} MB。", flush=True)

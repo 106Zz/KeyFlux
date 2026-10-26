@@ -1,4 +1,4 @@
-//! 菜单栏行为：启动提醒后检查权限，权限齐全时开始监听。
+//! 菜单栏行为：检查权限、启用 / 暂停键盘切换与协调自动恢复。
 
 use crate::application::app::KeyFlux;
 use crate::error::Result;
@@ -8,7 +8,7 @@ use crate::infrastructure::macos::diagnostics::record;
 use std::time::{Duration, Instant};
 
 pub(crate) fn run(mut engine: KeyFlux) -> Result<()> {
-    let mut message = "尚未开始监听。请先关闭系统的中/英键切换输入法选项。".to_owned();
+    let mut message = "尚未启用键盘切换。请先关闭系统的中/英键切换输入法选项。".to_owned();
     let mut recovery = RecoveryPlan::default();
     let mut caps_target = None;
     control_window::run(move |action| {
@@ -23,12 +23,12 @@ pub(crate) fn run(mut engine: KeyFlux) -> Result<()> {
                 }) {
                     Ok(()) => {
                         recovery.started(Instant::now());
-                        "正在后台监听。可从菜单栏停止监听或退出 KeyFlux。".into()
+                        "键盘切换已启用。可从菜单栏暂停或退出 KeyFlux。".into()
                     }
                     Err(error) => {
                         recovery.stop();
                         record(format_args!("KeyFlux：{error}"));
-                        format!("未能开始监听：{error}")
+                        format!("未能启用键盘切换：{}", user_error(&error))
                     }
                 };
             }
@@ -36,10 +36,10 @@ pub(crate) fn run(mut engine: KeyFlux) -> Result<()> {
                 recovery.stop();
                 caps_target = None;
                 message = match engine.stop() {
-                    Ok(()) => "监听已停止，键盘已交回系统。可以从菜单栏重新开始或退出。".into(),
+                    Ok(()) => "键盘切换已暂停，按键交由系统处理。可从菜单栏重新启用或退出。".into(),
                     Err(error) => {
                         record(format_args!("KeyFlux：{error}"));
-                        format!("监听已停止：{error}")
+                        format!("键盘切换已暂停：{}", user_error(&error))
                     }
                 };
             }
@@ -52,22 +52,24 @@ pub(crate) fn run(mut engine: KeyFlux) -> Result<()> {
                     if let Some(error) = &error { record(format_args!("KeyFlux：监听故障：{error}")); }
                     if let Some(error) = error.as_ref().filter(|error| !can_recover(error)) {
                         recovery.stop();
-                        message = format!("监听已停止，需要手动处理：{error}");
+                        message = format!("键盘切换已暂停，需要手动处理：{}", user_error(error));
                     } else {
                         let delay = recovery.failed(Instant::now());
                         message = recovery_message(delay);
-                        record(format_args!("KeyFlux：{message}"));
+                        // 保留诊断标记，已有性能采集脚本仍可识别恢复阶段。
+                        record(format_args!("KeyFlux：键盘暂交系统，{}ms 后自动重建监听；可从菜单栏停止或退出。", delay.as_millis()));
                     }
                 }
             }
             ControlAction::Recover => {
                 if recovery.is_due(Instant::now()) && !engine.is_running() {
+                    record(format_args!("KeyFlux：开始自动重建监听。"));
                     match engine.resume(caps_target) {
                         Ok(()) => {
                             recovery.started(Instant::now());
                             caps_target = None;
-                            message = "已自动重建监听，正在后台运行。".into();
-                            record(format_args!("KeyFlux：{message}"));
+                            message = "键盘切换已自动恢复，正在后台运行。".into();
+                            record(format_args!("KeyFlux：已自动重建监听，正在后台运行。"));
                         }
                         Err(error) => {
                             // start 可能只完成部分注册；停止会释放已有资源及原生连接。
@@ -79,7 +81,7 @@ pub(crate) fn run(mut engine: KeyFlux) -> Result<()> {
                             } else {
                                 recovery.stop();
                                 caps_target = None;
-                                message = format!("自动恢复已暂停，需要手动处理：{error}");
+                                message = format!("自动恢复已暂停，需要手动处理：{}", user_error(&error));
                             }
                         }
                     }
@@ -89,7 +91,7 @@ pub(crate) fn run(mut engine: KeyFlux) -> Result<()> {
         let (permissions_granted, permissions) = match PermissionStatus::check() {
             Ok(status) => (status.is_granted(), format!("设备控制 / 辅助功能：{}\n事件发送：{}\n输入监控：{}",
                 allowed(status.accessibility), allowed(status.post_event), allowed(status.input_monitoring))),
-            Err(error) => (false, format!("无法查询权限：{error}")),
+            Err(error) => (false, format!("无法查询权限：{}", user_error(&error))),
         };
         ControlState { running: engine.is_running(), message: message.clone(), permissions, permissions_granted,
             recovery_delay: recovery.delay(Instant::now()) }
@@ -98,6 +100,11 @@ pub(crate) fn run(mut engine: KeyFlux) -> Result<()> {
 
 fn allowed(value: bool) -> &'static str { if value { "已允许" } else { "未允许" } }
 
+// 仅转换界面措辞；底层错误与日志保留原始诊断信息。
+fn user_error(error: &crate::error::Error) -> String {
+    error.to_string().replace("键盘监听", "键盘切换").replace("监听", "键盘切换")
+}
+
 fn can_recover(error: &crate::error::Error) -> bool {
     use crate::error::Error;
     !matches!(error, Error::MissingPermissions | Error::UnsupportedPlatform | Error::InputSourcesUnavailable(_))
@@ -105,7 +112,7 @@ fn can_recover(error: &crate::error::Error) -> bool {
 }
 
 fn recovery_message(delay: Duration) -> String {
-    format!("键盘暂交系统，{}ms 后自动重建监听；可从菜单栏停止或退出。", delay.as_millis())
+    format!("键盘切换暂不可用，{}ms 后自动恢复；可从菜单栏暂停或退出。", delay.as_millis())
 }
 
 /// 正常运行时没有定时检查；只有故障才安排一次唤醒，持续故障最多每 30 秒重建一次。

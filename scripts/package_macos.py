@@ -23,6 +23,19 @@ def run(*command):
     subprocess.run(command, check=True)
 
 
+def create_icon(source, destination, work):
+    """Build the standard macOS icon sizes from the checked-in PNG artwork."""
+    iconset = work / f"{destination.stem}.iconset"
+    iconset.mkdir()
+    for size in (16, 32, 128, 256, 512):
+        for scale in (1, 2):
+            suffix = "@2x" if scale == 2 else ""
+            subprocess.run(["sips", "-z", str(size * scale), str(size * scale), str(source),
+                            "--out", str(iconset / f"icon_{size}x{size}{suffix}.png")],
+                           check=True, stdout=subprocess.DEVNULL)
+    run("iconutil", "-c", "icns", str(iconset), "-o", str(destination))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sign-identity", default=os.environ.get("KEYFLUX_SIGN_IDENTITY", "-"),
@@ -38,11 +51,16 @@ def main():
         parser.error("Notarization requires a Developer ID Application identity")
     if args.app_only and args.notary_profile:
         parser.error("Development App mode does not submit notarization requests")
-    for tool in ("cargo", "codesign", "hdiutil", "xcrun"):
+    for tool in ("cargo", "codesign", "hdiutil", "xcrun", "sips", "iconutil"):
         if not shutil.which(tool):
             parser.error(f"Required tool not found: {tool}")
 
     root = Path(__file__).resolve().parents[1]
+    icons = root / "packaging/macos/icons"
+    for name in ("KeyFlux.png", "KeyFluxDMG.png"):
+        if not (icons / name).is_file():
+            parser.error(f"Required artwork not found: {icons / name}")
+    set_file = subprocess.check_output(["xcrun", "--find", "SetFile"], text=True).strip()
     metadata = json.loads(subprocess.check_output([
         "cargo", "metadata", "--no-deps", "--offline", "--locked", "--format-version", "1",
         "--manifest-path", str(root / "Cargo.toml")], text=True))
@@ -67,6 +85,7 @@ def main():
     macos.mkdir(parents=True)
     resources.mkdir()
     shutil.copy2(binary, macos / "KeyFlux")
+    create_icon(icons / "KeyFlux.png", resources / "KeyFlux.icns", output)
     with (root / "packaging/macos/Info.plist").open("rb") as source:
         info = plistlib.load(source)
     info["CFBundleIdentifier"] = args.bundle_id
@@ -103,8 +122,29 @@ def main():
         run("xcrun", "stapler", "staple", str(app))
         run("xcrun", "stapler", "validate", str(app))
 
+    disk_icon = output / "KeyFluxDMG.icns"
+    create_icon(icons / "KeyFluxDMG.png", disk_icon, output)
+    shutil.copy2(disk_icon, staging / ".VolumeIcon.icns")
+    # Configure only this new image's volume. Never mount or change an installed App.
+    working_image = output / "KeyFlux-working.dmg"
+    run("hdiutil", "create", "-volname", "KeyFlux", "-srcfolder", str(staging),
+        "-fs", "HFS+", "-format", "UDRW", str(working_image))
+    mountpoint = output / "mounted-volume"
+    mountpoint.mkdir()
+    run("hdiutil", "attach", str(working_image), "-nobrowse", "-noautoopen", "-mountpoint", str(mountpoint))
+    try:
+        run(set_file, "-a", "C", str(mountpoint))
+    finally:
+        run("hdiutil", "detach", str(mountpoint))
     image = output / f"KeyFlux-{version}-{platform.machine()}.dmg"
-    run("hdiutil", "create", "-volname", "KeyFlux", "-srcfolder", str(staging), "-format", "UDZO", str(image))
+    run("hdiutil", "convert", str(working_image), "-format", "UDZO", "-o", str(image))
+    # Embed the file icon in the DMG data fork so it survives a GitHub download.
+    # A Finder-only resource fork or extended attribute would be lost in transit.
+    icon_resources = output / "dmg-icon-resources.plist"
+    with icon_resources.open("wb") as target:
+        plistlib.dump({"icns": [{"Attributes": "0x0000", "ID": "-16455", "Name": "",
+                               "Data": disk_icon.read_bytes()}]}, target)
+    run("hdiutil", "udifrez", str(image), "-xml", str(icon_resources))
     if args.sign_identity != "-":
         run("codesign", "--sign", args.sign_identity, "--timestamp", str(image))
     if args.notary_profile:
@@ -117,7 +157,7 @@ def main():
     print(f"\nApp: {app}\nDMG: {image}\nSHA256: {digest}")
     print("Signing: " + ("local ad-hoc; not notarized" if args.sign_identity == "-" else args.sign_identity))
     if not args.notary_profile:
-        print("Not notarized: this artifact is for testing, not a notarized public release.")
+        print("Not notarized: disclose this signing status and macOS opening restrictions in release notes.")
 
 
 if __name__ == "__main__":

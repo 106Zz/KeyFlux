@@ -10,6 +10,8 @@
     <string>KeyFlux</string>
     <key>CFBundleExecutable</key>
     <string>KeyFlux</string>
+    <key>CFBundleIconFile</key>
+    <string>KeyFlux.icns</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -20,6 +22,8 @@
     <string>10.15</string>
     <key>LSBackgroundOnly</key>
     <false/>
+    <key>LSUIElement</key>
+    <true/>
     <key>NSHumanReadableCopyright</key>
     <string>Copyright © 2026 KeyFlux contributors. MIT License.</string>
 </dict>
